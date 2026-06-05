@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      core-ref:
+        description: ARK Core git ref to build from
+        required: true
+        default: main
+      version:
+        description: ARK-iOS release version, for example v1.2.3. Push builds use v0.1.<run_number>.
+        required: false
+
+jobs:
+  release:
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout ARK-iOS
+        uses: actions/checkout@v4
+        with:
+          path: ARK-iOS
+
+      - name: Resolve release inputs
+        id: release_inputs
+        env:
+          INPUT_CORE_REF: ${{ github.event.inputs['core-ref'] }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          CORE_REF="${INPUT_CORE_REF:-main}"
+          VERSION="${INPUT_VERSION:-v0.1.${GITHUB_RUN_NUMBER}}"
+          echo "core_ref=$CORE_REF" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout ARK Core
+        uses: actions/checkout@v4
+        with:
+          repository: ARK-Builders/ark-core
+          ref: ${{ steps.release_inputs.outputs.core_ref }}
+          path: Core
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Set up Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Core/drop-core/uniffi
+
+      - name: Generate Swift bindings
+        working-directory: ARK-iOS
+        run: CORE_DIR="$GITHUB_WORKSPACE/Core" ./tools/generate-bindings.sh
+
+      - name: Build XCFramework
+        working-directory: ARK-iOS
+        env:
+          DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+        run: CORE_DIR="$GITHUB_WORKSPACE/Core" ./tools/build-xcframework.sh
+
+      - name: Package XCFramework
+        id: package
+        working-directory: ARK-iOS/core/Artifacts
+        run: |
+          zip -r arkdrop_uniffiFFI.xcframework.zip arkdrop_uniffiFFI.xcframework
+          CHECKSUM="$(swift package compute-checksum arkdrop_uniffiFFI.xcframework.zip)"
+          echo "$CHECKSUM" > arkdrop_uniffiFFI.xcframework.zip.checksum
+          echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
+
+      - name: Update Package.swift
+        working-directory: ARK-iOS
+        run: |
+          URL="https://github.com/ARK-Builders/ARK-iOS/releases/download/${{ steps.release_inputs.outputs.version }}/arkdrop_uniffiFFI.xcframework.zip"
+          ./tools/update-package-binary-target.sh "$URL" "${{ steps.package.outputs.checksum }}"
+
+      - name: Commit release metadata
+        working-directory: ARK-iOS
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.swift core/Sources/ArkDrop/ArkDrop.swift
+          if git diff --cached --quiet; then
+            echo "No release metadata changes to commit."
+          else
+            git commit -m "Release ${{ steps.release_inputs.outputs.version }} Swift bindings"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_inputs.outputs.version }}
+          target_commitish: ${{ github.ref_name }}
+          name: ARK-iOS ${{ steps.release_inputs.outputs.version }}
+          files: |
+            ARK-iOS/core/Artifacts/arkdrop_uniffiFFI.xcframework.zip
+            ARK-iOS/core/Artifacts/arkdrop_uniffiFFI.xcframework.zip.checksum
+          body: |
+            Built from ARK Core ref `${{ steps.release_inputs.outputs.core_ref }}`.
+
+            The SwiftPM checksum is attached as `arkdrop_uniffiFFI.xcframework.zip.checksum`.

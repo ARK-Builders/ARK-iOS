@@ -1,0 +1,16 @@
+# SwiftPM and Xcode
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcworkspace
+
+# Generated binding artifacts
+core/Generated/
+core/Artifacts/*
+!core/Artifacts/.gitkeep
+*.xcframework
+*.xcframework.zip
+
+# macOS
+.DS_Store

@@ -22,7 +22,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "arkdrop_uniffiFFI",
-            path: "core/Artifacts/arkdrop_uniffiFFI.xcframework"
+            url: "https://github.com/ARK-Builders/ARK-iOS/releases/download/v0.1.1/arkdrop_uniffiFFI.xcframework.zip",
+            checksum: "d57293d5a38cc6862a5de04b3881a598bc51ca7ea39dd477cebbb69994a966fb"
         ),
     ]
 )
